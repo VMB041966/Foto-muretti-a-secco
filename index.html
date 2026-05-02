@@ -501,11 +501,59 @@
     </div>
 
     <script type="text/javascript">
-        // --- SNAPSHOT SORGENTE STATICO PER VERSIONE ---
-        // Viene catturato in modo sincrono durante la primissima fase di parsing.
-        // Questo stratagemma blocca l'esclusione di iniezioni DOM a runtime (API Google Maps, Estensioni Browser, interazioni),
-        // forzando l'Hash a cambiare "solo ed esclusivamente" a fronte di un reale salvataggio del file fisico.
-        const _APP_STATIC_SOURCE = document.documentElement.innerHTML.replace(/\s+/g, '');
+        // --- GENERAZIONE AUTOMATICA HASH VERSIONE (ANTI-INQUINAMENTO) ---
+        // La funzione effettua una clonazione sterile del codice prima che estensioni
+        // o api esterne (Google Maps, Grammarly, ecc.) inquinino l'HTML.
+        function setAppVersion() {
+            try {
+                let coreSource = "";
+                
+                // 1. Catturiamo il CSS nativo
+                document.querySelectorAll("style").forEach(s => coreSource += s.innerHTML);
+                
+                // 2. Catturiamo il JS nativo (ignorando script esterni come Tailwind o Google Maps)
+                document.querySelectorAll("script").forEach(s => {
+                    if (!s.src) coreSource += s.innerHTML;
+                });
+
+                // 3. Catturiamo la UI clonando il body per poterlo ispezionare in sicurezza
+                let bodyClone = document.body.cloneNode(true);
+                
+                // Pulizia aggressiva da elementi iniettati da browser o da estensioni note
+                bodyClone.querySelectorAll("script, style, noscript, iframe, grammarly-desktop-integration, [id^='ext'], [class^='ext']").forEach(el => el.remove());
+                
+                // Svuotiamo preventivamente tutti i contenitori dinamici il cui contenuto HTML interno
+                // può fluttuare senza alterare il codice originario (es. canvas mappa, contatori, liste json)
+                const dynamicIds = ["map", "gpsStatus", "recordCount", "appVersion", "recordsList", "archiveListContainer"];
+                dynamicIds.forEach(id => {
+                    const el = bodyClone.querySelector("#" + id);
+                    if (el) el.innerHTML = "";
+                });
+
+                coreSource += bodyClone.innerHTML;
+
+                // Rimuoviamo gli spazi vuoti, gli a capo e le virgolette. In questo modo
+                // il calcolo dell'Hash è totalmente immune alla formattazione e ai minifier accidentali.
+                const cleanSource = coreSource.replace(/[\s"']/g, '');
+
+                let hash = 0;
+                for (let i = 0; i < cleanSource.length; i++) {
+                    hash = ((hash << 5) - hash) + cleanSource.charCodeAt(i);
+                    hash = hash & hash; 
+                }
+                const hashVersion = Math.abs(hash).toString(16).toUpperCase().padStart(6, '0').substring(0, 6);
+                
+                const appVersionEl = document.getElementById("appVersion");
+                if (appVersionEl) appVersionEl.innerText = "v." + hashVersion;
+            } catch(e) {
+                console.error("Errore hashing versione:", e);
+            }
+        }
+
+        // Eseguiamo il calcolo sincrono SUBITO, prima ancora che scatti l'evento window.onload
+        // e prim'ancora che qualsiasi script di terze parti alteri il DOM.
+        setAppVersion();
+
 
         // --- INIZIALIZZAZIONE & STATO ---
         let map;
@@ -539,19 +587,6 @@
 
         // Data odierna di default
         document.getElementById('dataRilievo').valueAsDate = new Date();
-
-        // Generazione automatica Hash Versione
-        function setAppVersion() {
-            let hash = 0;
-            // Esegue l'hashing sull'impronta statica catturata all'avvio, ignorando il DOM correntemente inquinato
-            for (let i = 0; i < _APP_STATIC_SOURCE.length; i++) {
-                hash = ((hash << 5) - hash) + _APP_STATIC_SOURCE.charCodeAt(i);
-                hash = hash & hash; 
-            }
-            // Utilizziamo padStart per garantire uniformemente 6 caratteri esadecimali in tutte le versioni future
-            const hashVersion = Math.abs(hash).toString(16).toUpperCase().padStart(6, '0').substring(0, 6);
-            document.getElementById("appVersion").innerText = "v." + hashVersion;
-        }
 
         // --- DATABASE LOCALE (IndexedDB) ---
         function initLocalDB() {
@@ -2089,7 +2124,6 @@
 
         // Init
         window.onload = async function() {
-            setAppVersion();
             try {
                 await initLocalDB();
                 recordsDB = await loadFromDB() || [];
