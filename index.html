@@ -1,0 +1,2115 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Foto muretti a secco - App Agronomo</title>
+
+    <!-- Tailwind CSS per UI Responsiva e High Contrast -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- jsPDF per esportazione Report e Layout Foto -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- JSZip per esportazione foto e lettura KMZ -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+    <!-- Proj4js per conversione coordinate WGS84 -> UTM e viceversa (Catasto) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+
+    <!-- html2canvas per esportazione mappa -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        :root {
+            --primary-text: #000000;
+            --border-color: #333333;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #f3f4f6;
+            color: var(--primary-text);
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Area Mappa */
+        #map {
+            height: 45vh;
+            width: 100%;
+            border-bottom: 4px solid var(--border-color);
+            background-color: #e5e7eb;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #4b5563;
+        }
+        /* Input Form */
+        .form-input {
+            width: 100%;
+            padding: 0.875rem;
+            font-size: 1.125rem; /* Evita zoom su iOS */
+            border: 2px solid var(--border-color);
+            border-radius: 0.5rem;
+            background-color: #ffffff;
+            color: #000;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.3);
+        }
+        .form-input:disabled, .form-input[readonly] {
+            background-color: #e5e7eb;
+            color: #4b5563;
+        }
+        .label-text {
+            display: block;
+            font-weight: 700;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+            color: #1f2937;
+            text-transform: uppercase;
+        }
+        /* Bottoni */
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 1rem;
+            font-size: 1.1rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            border-radius: 0.5rem;
+            border: 2px solid var(--border-color);
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .btn:disabled {
+            background-color: #d1d5db !important;
+            color: #6b7280 !important;
+            border-color: #9ca3af !important;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .btn-primary { background-color: #16a34a; color: white; border-color: #14532d; }
+        .btn-camera { background-color: #f59e0b; color: black; border-color: #78350f; }
+        
+        input[type="file"] { display: none; }
+        
+        #photoPreview {
+            display: none;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            object-fit: cover;
+            border: 2px solid var(--border-color);
+            border-radius: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        #toast {
+            visibility: hidden;
+            min-width: 250px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 8px;
+            padding: 16px;
+            position: fixed;
+            z-index: 1000;
+            left: 50%;
+            bottom: 30px;
+            transform: translateX(-50%);
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+        #toast.show {
+            visibility: visible;
+            animation: fadein 0.5s, fadeout 0.5s 2.5s;
+        }
+        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+
+        .btn-sm-ui {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+            font-size: 0.85rem;
+            font-weight: 700;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        
+        /* Nasconde la scrollbar orizzontale mantenendo lo scroll tattile su mobile */
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="pb-24">
+
+    <!-- Header -->
+    <header class="bg-slate-900 text-white p-4 sticky top-0 z-50 flex justify-between items-center shadow-md">
+        <div>
+            <div class="flex items-baseline space-x-2">
+                <h1 class="text-xl font-bold uppercase">Foto muretti a secco</h1>
+                <span id="appVersion" class="text-xs font-mono text-gray-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700"></span>
+            </div>
+            <p class="text-xs text-gray-300 mt-1" id="gpsStatus">Inizializzazione sistema in corso...</p>
+        </div>
+        <div class="bg-blue-600 px-3 py-1 rounded border-2 border-blue-400">
+            <span class="text-sm font-bold">Foto: <span id="recordCount">0</span></span>
+        </div>
+    </header>
+
+    <!-- Area Mappa -->
+    <div class="relative w-full">
+        <div id="map">Caricamento Ortofoto...</div>
+    </div>
+    
+    <!-- Toolbar KML -->
+    <div class="bg-slate-800 text-white p-2 flex flex-row items-center shadow-inner border-b-4 border-slate-900 gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide">
+        <label class="btn-sm-ui bg-fuchsia-700 hover:bg-fuchsia-800 text-white border border-fuchsia-500 m-0 shrink-0">
+            📂 Carica Ante Operam (.KML/.KMZ)
+            <input type="file" id="kmlInput" accept=".kml,.kmz" onchange="loadKML(event)">
+        </label>
+        <button type="button" onclick="clearKML()" class="btn-sm-ui bg-red-600 hover:bg-red-700 text-white border border-red-400 hidden shrink-0" id="clearKmlBtn">
+            🗑️ Rimuovi
+        </button>
+        <button type="button" onclick="toggleKmlVisibility()" class="btn-sm-ui bg-gray-600 hover:bg-gray-700 text-white border border-gray-400 hidden shrink-0" id="toggleKmlBtn">
+            👁️ Nascondi
+        </button>
+    </div>
+
+    <!-- Toolbar Catasto GeoJSON -->
+    <div class="bg-slate-800 text-white p-2 flex flex-row items-center shadow-inner border-b-4 border-slate-900 gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide">
+        <label class="btn-sm-ui bg-blue-600 hover:bg-blue-700 text-white border border-blue-400 m-0 shrink-0">
+            📂 Catasto (.geojson)
+            <input type="file" id="geojsonInput" accept=".geojson,.json" class="hidden" onchange="loadGeoJson(event)">
+        </label>
+        <button type="button" onclick="clearGeoJson()" class="btn-sm-ui bg-red-600 hover:bg-red-700 text-white border border-red-400 hidden shrink-0" id="clearGeoJsonBtn">
+            🗑️ Rimuovi
+        </button>
+        <button type="button" onclick="toggleGeoJsonVisibility()" class="btn-sm-ui bg-gray-600 hover:bg-gray-700 text-white border border-gray-400 hidden shrink-0" id="toggleGeoJsonBtn">
+            👁️ Nascondi
+        </button>
+        <div id="searchParcelContainer" class="flex items-center bg-slate-700 rounded border border-slate-600 shrink-0 h-[28px]" style="display:none;">
+            <input type="text" id="searchParcelInput" class="bg-slate-900 text-white font-bold text-xs px-2 h-full rounded-l border-none focus:outline-none focus:ring-1 focus:ring-blue-500 w-20" placeholder="Particella" onkeypress="if(event.key === 'Enter') { event.preventDefault(); searchParcel(); }">
+            <button type="button" onclick="searchParcel()" class="text-gray-300 hover:text-white px-2 h-full font-bold flex items-center justify-center text-xs" title="Cerca e Centra in mappa">🔍</button>
+            <button type="button" onclick="zoomToSelectedParcel()" class="text-green-400 hover:text-green-300 px-2 h-full font-bold flex items-center justify-center text-xs border-l border-slate-600" title="Zoom massimo sulla particella selezionata">🎯</button>
+        </div>
+        <div class="flex-grow min-w-[4px]"></div>
+        <div class="flex items-center shrink-0" id="geojsonOpacityContainer" style="display:none;">
+            <label for="catastoOpacity" class="font-bold uppercase text-[10px] mr-2 text-gray-400 tracking-wider">Trasp.</label>
+            <input type="range" id="catastoOpacity" min="0.1" max="1" step="0.1" value="0.5" class="w-16 accent-blue-500" oninput="updateGeoJsonStyle()">
+            <span id="catastoOpacityValue" class="ml-1 font-mono font-bold text-yellow-400 text-xs w-8 text-right">50%</span>
+        </div>
+    </div>
+
+    <!-- Container Form Principale -->
+    <main class="p-4 max-w-3xl mx-auto mt-4">
+        
+        <form id="surveyForm" onsubmit="event.preventDefault(); saveRecord();" oninput="enableSaveButton()" onchange="enableSaveButton()">
+            
+            <div class="bg-yellow-100 p-4 rounded-lg border-2 border-yellow-400 mb-6 shadow-sm">
+                <h3 class="font-bold text-yellow-800 mb-3 uppercase text-sm border-b border-yellow-300 pb-1">Dati Persistenti (Comuni a tutte le foto)</h3>
+                
+                <div class="mb-3">
+                    <label class="label-text">Committente</label>
+                    <input type="text" id="committente" class="form-input mb-0" placeholder="Es. Mario Rossi">
+                </div>
+                <div class="mb-3">
+                    <label class="label-text">Tecnico Rilevatore</label>
+                    <input type="text" id="tecnico" class="form-input mb-0" value="Dott. Agr. " placeholder="Es. Dott. Agr. Nome Cognome">
+                </div>
+                
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="label-text">Comune</label>
+                        <input type="text" id="comune" class="form-input mb-0" placeholder="Es. Noci">
+                    </div>
+                    <div>
+                        <label class="label-text">Data Rilievo</label>
+                        <input type="date" id="dataRilievo" class="form-input mb-0">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3 mb-3">
+                    <div>
+                        <label class="label-text">Foglio</label>
+                        <input type="text" id="foglio" class="form-input mb-0">
+                    </div>
+                    <div>
+                        <label class="label-text">Particella</label>
+                        <input type="text" id="particella" class="form-input mb-0">
+                    </div>
+                    <div>
+                        <label class="label-text">Tratto</label>
+                        <input type="text" id="tratto" class="form-input mb-0" placeholder="Es. A">
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-lg border-2 border-gray-300 mb-6 shadow-sm">
+                <h3 class="font-bold text-gray-800 mb-3 uppercase text-sm border-b border-gray-200 pb-1">Dati Singolo Scatto</h3>
+                
+                <div class="grid grid-cols-3 gap-3 mb-4">
+                    <div class="col-span-1">
+                        <label class="label-text text-blue-600">ID Foto</label>
+                        <input type="text" id="idFoto" class="form-input bg-blue-50 text-center text-blue-800 font-black mb-0" readonly value="001">
+                    </div>
+                    <div class="col-span-2">
+                        <label class="label-text">Coordinate DMS (Tocca mappa)</label>
+                        <input type="text" id="coordinate" class="form-input mb-0 text-sm bg-gray-100" placeholder="Es. 40°44'19.06&quot;N; 17° 0'21.71&quot;E" readonly required>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="label-text text-amber-700">Fotografia (Verrà croppata in 16:9)</label>
+                    <label class="btn btn-camera">
+                        📸 Scatta Foto Muretto
+                        <input type="file" id="photoInput" accept="image/*" capture="environment" onclick="checkFieldsBeforePhoto(event)" onchange="handlePhoto(event)">
+                    </label>
+                    <input type="hidden" id="photoFileName">
+                    <input type="hidden" id="photoDataUrl">
+                    <img id="photoPreview" alt="Anteprima Foto Muretto">
+                    <p id="photoNameDisplay" class="text-xs font-bold mt-2 text-gray-600 break-all"></p>
+                </div>
+            </div>
+
+            <button type="submit" id="saveRecordBtn" class="btn btn-primary mb-8 text-xl">
+                💾 Salva Punto e Foto
+            </button>
+        </form>
+
+        <hr class="border-2 border-gray-300 my-8">
+
+        <!-- Lista -->
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold uppercase text-gray-800 m-0">Scatti Effettuati</h2>
+            <button type="button" onclick="fitMapToAllPoints()" class="btn-sm-ui bg-blue-600 hover:bg-blue-700 text-white border border-blue-400 shadow-sm active:bg-blue-800 px-3 py-1">
+                🗺️ Inquadra Tutti
+            </button>
+        </div>
+        <div id="recordsList" class="mb-8 space-y-3">
+            <p class="text-gray-500 italic">Nessun dato salvato in questa sessione.</p>
+        </div>
+
+        <hr class="border-2 border-gray-300 my-8">
+
+        <!-- Esportazione -->
+        <h2 class="text-xl font-bold uppercase mb-4">Gestione & Export</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+            <button type="button" class="btn" onclick="exportPhotoPDF()" style="background-color: #dc2626; color: white; border-color: #991b1b;">
+                🖼️ Layout Foto (PDF 2x2)
+            </button>
+            <button type="button" class="btn" onclick="exportReportPDF()" style="background-color: #0284c7; color: white; border-color: #0369a1;">
+                📄 Report Dati (PDF)
+            </button>
+            <button type="button" class="btn" onclick="exportMapPDF()" style="background-color: #8b5cf6; color: white; border-color: #7c3aed;">
+                🗺️ Planimetria Mappa (PDF)
+            </button>
+            <button type="button" class="btn" onclick="exportZIP()" style="background-color: #ea580c; color: white; border-color: #9a3412;">
+                📦 Archivio Foto (ZIP)
+            </button>
+            <button type="button" class="btn" onclick="exportCSV()" style="background-color: #16a34a; color: white; border-color: #14532d;">
+                📊 Tabella Dati (CSV)
+            </button>
+        </div>
+
+        <hr class="border-2 border-gray-300 my-8">
+
+        <h2 class="text-xl font-bold uppercase mb-4 text-gray-800">Sessioni & Backup</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <button type="button" class="btn shadow-md" onclick="showNewSessionModal()" style="background-color: #991b1b; color: white; border-color: #450a0a;">
+                🆕 Nuovo Rilievo
+            </button>
+            <button type="button" class="btn shadow-md" onclick="showArchiveModal()" style="background-color: #374151; color: white; border-color: #111827;">
+                📂 Archivio Storico
+            </button>
+            <button type="button" class="btn shadow-md" onclick="exportDatabase()" style="background-color: #0f766e; color: white; border-color: #115e59;">
+                ⬇️ Esporta Backup
+            </button>
+            <label class="btn shadow-md m-0 cursor-pointer" style="background-color: #047857; color: white; border-color: #064e3b;">
+                ⬆️ Importa Backup
+                <input type="file" accept=".json" class="hidden" onchange="importDatabase(event)">
+            </label>
+        </div>
+    </main>
+
+    <div id="toast">Operazione completata!</div>
+
+    <!-- Modals -->
+    <!-- Modal API Key -->
+    <div id="apiKeyModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-[120] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full shadow-2xl border-t-8 border-blue-600">
+            <h3 class="text-2xl font-black text-gray-900 mb-4 uppercase">🔑 API Google Maps</h3>
+            <p class="text-gray-800 mb-4 font-medium">Inserisci la tua API Key per caricare le Ortofoto. Sarà salvata sul dispositivo.</p>
+            <input type="text" id="apiKeyValue" class="form-input mb-6" placeholder="Incolla API Key..." required>
+            <button onclick="saveApiKeyAndLoadMap()" class="w-full btn btn-primary">Salva e Carica</button>
+        </div>
+    </div>
+
+    <!-- Modal Nuova Sessione -->
+    <div id="newSessionModal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-[120] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full shadow-2xl border-t-8 border-red-800">
+            <h3 class="text-2xl font-black text-red-800 mb-4 uppercase">Nuovo Rilievo</h3>
+            <p class="text-gray-800 mb-4 font-medium">I dati correnti verranno spostati nell'Archivio Storico e la mappa verrà pulita.</p>
+            <input type="text" id="sessionNameInput" class="form-input mb-6" placeholder="Nome Rilievo (Opzionale)">
+            <div class="flex flex-col space-y-3">
+                <button onclick="confirmNewSession()" class="w-full btn" style="background-color: #991b1b; color: white;">Procedi</button>
+                <button onclick="document.getElementById('newSessionModal').classList.add('hidden')" class="w-full btn bg-gray-200 border-gray-400">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Archivio -->
+    <div id="archiveModal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-[120] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl border-t-8 border-gray-800">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-2xl font-black text-gray-900 uppercase">Archivio</h3>
+                <button onclick="document.getElementById('archiveModal').classList.add('hidden')" class="text-3xl font-bold">&times;</button>
+            </div>
+            <div id="archiveListContainer" class="flex-1 overflow-y-auto pr-2 space-y-3"></div>
+        </div>
+    </div>
+
+    <!-- Nuovi Modali Archivio Storico (Rinomina / Elimina) -->
+    <div id="renameSessionModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-[160] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-sm w-full shadow-xl border-t-4 border-yellow-500">
+            <h3 class="text-xl font-bold text-yellow-600 mb-2">Rinomina Rilievo</h3>
+            <input type="text" id="renameSessionInput" class="form-input mb-4 w-full" placeholder="Nuovo nome del rilievo...">
+            <div class="flex flex-col space-y-3 mt-4">
+                <button id="confirmRenameSessionBtn" class="w-full px-4 py-3 bg-yellow-500 text-white font-bold rounded-lg hover:bg-yellow-600 text-lg uppercase shadow-md">Salva Nome</button>
+                <button onclick="closeRenameSessionModal()" class="w-full px-4 py-3 bg-gray-200 text-gray-800 border-2 border-gray-300 font-bold rounded-lg hover:bg-gray-300 text-lg uppercase shadow-sm">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="deleteSessionModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-[160] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-sm w-full shadow-xl border-t-4 border-red-600">
+            <h3 class="text-xl font-bold text-red-600 mb-2">Attenzione!</h3>
+            <p class="text-gray-800 text-lg mb-6">Vuoi eliminare definitivamente il rilievo <strong id="deleteSessionNameDisplay" class="text-xl text-red-600"></strong> dall'Archivio Storico?<br>I dati non potranno essere recuperati.</p>
+            <div class="flex flex-col space-y-3 mt-4">
+                <button id="confirmDeleteSessionBtn" class="w-full px-4 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 text-lg uppercase shadow-md">Sì, Elimina Rilievo</button>
+                <button onclick="closeDeleteSessionModal()" class="w-full px-4 py-3 bg-gray-200 text-gray-800 border-2 border-gray-300 font-bold rounded-lg hover:bg-gray-300 text-lg uppercase shadow-sm">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Errore -->
+    <div id="errorModal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-[150] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-sm w-full shadow-xl border-t-4 border-red-600">
+            <h3 class="text-xl font-bold text-red-600 mb-2">Avviso</h3>
+            <p id="errorModalMsg" class="text-gray-800 text-lg mb-6"></p>
+            <button onclick="document.getElementById('errorModal').classList.add('hidden')" class="w-full btn" style="background-color: #dc2626; color: white;">Chiudi</button>
+        </div>
+    </div>
+
+    <!-- Modal Conferma Cancellazione -->
+    <div id="deleteModal" class="fixed inset-0 bg-black bg-opacity-75 hidden flex items-center justify-center z-[150] p-4">
+        <div class="bg-white rounded-lg p-6 max-w-sm w-full shadow-xl border-t-4 border-red-600">
+            <h3 class="text-xl font-bold text-red-600 mb-2">Attenzione!</h3>
+            <p class="text-gray-800 text-lg mb-6">Sei sicuro di voler cancellare lo scatto <strong id="deleteModalFotoId" class="text-2xl text-red-600"></strong>?<br>L'operazione non può essere annullata.</p>
+            <div class="flex flex-col space-y-3 mt-4">
+                <button id="confirmDeleteBtn" class="w-full px-4 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 text-lg uppercase shadow-md">Sì, Cancella</button>
+                <button onclick="closeDeleteModal()" class="w-full px-4 py-3 bg-gray-200 text-gray-800 border-2 border-gray-300 font-bold rounded-lg hover:bg-gray-300 text-lg uppercase shadow-sm">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Modifica Record -->
+    <div id="editModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-[150] p-4 overflow-y-auto">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full shadow-2xl border-t-8 border-blue-600 my-8">
+            <h3 class="text-xl font-black text-gray-900 mb-4 uppercase">Modifica Dati Scatto</h3>
+            
+            <input type="hidden" id="editIdFoto">
+            
+            <!-- Campi bloccati (Sola Lettura) -->
+            <div class="bg-gray-100 p-3 rounded mb-4 text-sm text-gray-700 border border-gray-300 shadow-inner">
+                <div class="flex justify-between items-center mb-1">
+                    <span class="font-bold uppercase text-xs text-gray-500">ID Scatto:</span>
+                    <span id="editDisplayId" class="font-black text-lg text-blue-800"></span>
+                </div>
+                <div class="mb-2">
+                    <span class="font-bold uppercase text-xs text-gray-500 block">Coordinate (Blindate):</span>
+                    <span id="editDisplayCoord" class="font-mono text-xs break-all bg-gray-200 p-1 rounded inline-block w-full"></span>
+                </div>
+                <div>
+                    <span class="font-bold uppercase text-xs text-gray-500 block mb-1">Fotografia (Blindata):</span>
+                    <img id="editDisplayPhoto" class="w-full h-auto aspect-[16/9] object-cover rounded border border-gray-400" src="" alt="Anteprima">
+                </div>
+            </div>
+
+            <!-- Campi modificabili -->
+            <div class="space-y-3">
+                <div>
+                    <label class="label-text text-xs text-blue-800">Committente</label>
+                    <input type="text" id="editCommittente" class="form-input py-2 text-base mb-0">
+                </div>
+                <div>
+                    <label class="label-text text-xs text-blue-800">Tecnico Rilevatore</label>
+                    <input type="text" id="editTecnico" class="form-input py-2 text-base mb-0">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="label-text text-xs text-blue-800">Comune</label>
+                        <input type="text" id="editComune" class="form-input py-2 text-base mb-0">
+                    </div>
+                    <div>
+                        <label class="label-text text-xs text-blue-800">Data Rilievo</label>
+                        <input type="date" id="editDataRilievo" class="form-input py-2 text-base mb-0">
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <div>
+                        <label class="label-text text-xs text-blue-800">Foglio</label>
+                        <input type="text" id="editFoglio" class="form-input py-2 text-base mb-0">
+                    </div>
+                    <div>
+                        <label class="label-text text-xs text-blue-800">P.lla</label>
+                        <input type="text" id="editParticella" class="form-input py-2 text-base mb-0">
+                    </div>
+                    <div>
+                        <label class="label-text text-xs text-blue-800">Tratto</label>
+                        <input type="text" id="editTratto" class="form-input py-2 text-base mb-0">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col space-y-2 mt-6">
+                <button onclick="saveEditRecord()" class="w-full px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 text-lg uppercase shadow-md">💾 Salva Modifiche</button>
+                <button onclick="closeEditModal()" class="w-full px-4 py-3 bg-gray-200 text-gray-800 border-2 border-gray-300 font-bold rounded-lg hover:bg-gray-300 text-lg uppercase shadow-sm">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        // --- SNAPSHOT SORGENTE STATICO PER VERSIONE ---
+        // Viene catturato in modo sincrono durante la primissima fase di parsing.
+        // Questo stratagemma blocca l'esclusione di iniezioni DOM a runtime (API Google Maps, Estensioni Browser, interazioni),
+        // forzando l'Hash a cambiare "solo ed esclusivamente" a fronte di un reale salvataggio del file fisico.
+        const _APP_STATIC_SOURCE = document.documentElement.innerHTML.replace(/\s+/g, '');
+
+        // --- INIZIALIZZAZIONE & STATO ---
+        let map;
+        let userMarker;
+        let currentPinMarker = null;
+        let recordsDB = [];
+        let savedMarkers = [];
+        let kmlMarkers = [];
+        let currentClickLatLng = null;
+        let customCursorStyle = null;
+        let recordToDeleteId = null;
+
+        // Variabili per Archivio Storico
+        let sessionToDeleteId = null;
+        let sessionToRenameId = null;
+
+        // Variabili stato KML
+        let isKmlVisible = true;
+
+        // Variabili stato Catasto GeoJSON
+        let hasGeoJsonLoaded = false;
+        let geoJsonInfoWindow = null;
+        let isGeoJsonVisible = true;
+        let highlightedFeatures = [];
+        let infoWindowTimeout = null;
+
+        const dbName = "MurettiDB";
+        const storeName = "rilievi";             
+        const archiveStoreName = "sessioni_salvate"; 
+        let localDB;
+
+        // Data odierna di default
+        document.getElementById('dataRilievo').valueAsDate = new Date();
+
+        // Generazione automatica Hash Versione
+        function setAppVersion() {
+            let hash = 0;
+            // Esegue l'hashing sull'impronta statica catturata all'avvio, ignorando il DOM correntemente inquinato
+            for (let i = 0; i < _APP_STATIC_SOURCE.length; i++) {
+                hash = ((hash << 5) - hash) + _APP_STATIC_SOURCE.charCodeAt(i);
+                hash = hash & hash; 
+            }
+            // Utilizziamo padStart per garantire uniformemente 6 caratteri esadecimali in tutte le versioni future
+            const hashVersion = Math.abs(hash).toString(16).toUpperCase().padStart(6, '0').substring(0, 6);
+            document.getElementById("appVersion").innerText = "v." + hashVersion;
+        }
+
+        // --- DATABASE LOCALE (IndexedDB) ---
+        function initLocalDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(dbName, 1);
+                request.onerror = (e) => reject("Errore IndexedDB");
+                request.onsuccess = (e) => { localDB = e.target.result; resolve(); };
+                request.onupgradeneeded = (e) => {
+                    localDB = e.target.result;
+                    if (!localDB.objectStoreNames.contains(storeName)) {
+                        localDB.createObjectStore(storeName, { keyPath: "id_foto" });
+                    }
+                    if (!localDB.objectStoreNames.contains(archiveStoreName)) {
+                        localDB.createObjectStore(archiveStoreName, { keyPath: "id_sessione" });
+                    }
+                };
+            });
+        }
+
+        async function saveToDB(record) {
+            return new Promise((resolve) => {
+                const tx = localDB.transaction([storeName], "readwrite");
+                tx.objectStore(storeName).put(record).onsuccess = () => resolve(true);
+            });
+        }
+
+        async function loadFromDB() {
+            return new Promise((resolve) => {
+                const tx = localDB.transaction([storeName], "readonly");
+                tx.objectStore(storeName).getAll().onsuccess = (e) => resolve(e.target.result);
+            });
+        }
+
+        async function clearActiveDB() {
+            return new Promise((resolve) => {
+                const tx = localDB.transaction([storeName], "readwrite");
+                tx.objectStore(storeName).clear().onsuccess = () => resolve(true);
+            });
+        }
+
+        async function deleteRecord(id) {
+            return new Promise((resolve) => {
+                const tx = localDB.transaction([storeName], "readwrite");
+                tx.objectStore(storeName).delete(id).onsuccess = () => resolve(true);
+            });
+        }
+
+        // Metodi IndexedDB per Archivio Storico
+        function deleteSessionFromDB(id) {
+            return new Promise((resolve) => {
+                const tx = localDB.transaction([archiveStoreName], "readwrite");
+                tx.objectStore(archiveStoreName).delete(id).onsuccess = () => resolve(true);
+            });
+        }
+
+        function renameSessionInDB(id, newName) {
+            return new Promise((resolve, reject) => {
+                const tx = localDB.transaction([archiveStoreName], "readwrite");
+                const store = tx.objectStore(archiveStoreName);
+                store.get(id).onsuccess = (e) => {
+                    const data = e.target.result;
+                    if(data) {
+                        data.nome_sessione = newName;
+                        store.put(data).onsuccess = () => resolve(true);
+                    } else {
+                        resolve(false);
+                    }
+                };
+            });
+        }
+
+        // --- MAPPA E GPS ---
+        function loadGoogleMapsScript() {
+            const key = localStorage.getItem('gmaps_api_key_muretti');
+            if (key) injectGoogleMapsScript(key);
+            else document.getElementById("apiKeyModal").classList.remove("hidden");
+        }
+
+        function saveApiKeyAndLoadMap() {
+            const key = document.getElementById("apiKeyValue").value.trim();
+            if (!key) return showError("Inserisci API Key valida.");
+            localStorage.setItem('gmaps_api_key_muretti', key);
+            document.getElementById("apiKeyModal").classList.add("hidden");
+            injectGoogleMapsScript(key);
+        }
+
+        function injectGoogleMapsScript(apiKey) {
+            document.getElementById("gpsStatus").innerText = "Caricamento mappa...";
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap`;
+            script.async = true;
+            script.defer = true;
+            script.onerror = () => { document.getElementById("gpsStatus").innerText = "Errore API Maps"; };
+            document.head.appendChild(script);
+        }
+
+        window.initMap = function() {
+            const crosshairSvg = `
+                <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="16" y1="0" x2="16" y2="12" stroke="#000000" stroke-width="3"/>
+                    <line x1="16" y1="20" x2="16" y2="32" stroke="#000000" stroke-width="3"/>
+                    <line x1="0" y1="16" x2="12" y2="16" stroke="#000000" stroke-width="3"/>
+                    <line x1="20" y1="16" x2="32" y2="16" stroke="#000000" stroke-width="3"/>
+                    <line x1="16" y1="0" x2="16" y2="12" stroke="#FFFF00" stroke-width="1.5"/>
+                    <line x1="16" y1="20" x2="16" y2="32" stroke="#FFFF00" stroke-width="1.5"/>
+                    <line x1="0" y1="16" x2="12" y2="16" stroke="#FFFF00" stroke-width="1.5"/>
+                    <line x1="20" y1="16" x2="32" y2="16" stroke="#FFFF00" stroke-width="1.5"/>
+                </svg>
+            `;
+            customCursorStyle = `url('data:image/svg+xml;charset=UTF-8,${encodeURIComponent(crosshairSvg.trim())}') 16 16, crosshair`;
+
+            map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 19,
+                center: { lat: 40.793, lng: 17.126 },
+                mapTypeId: "satellite",
+                disableDefaultUI: false,
+                mapTypeControl: false,
+                streetViewControl: false,
+                draggableCursor: customCursorStyle,
+                draggingCursor: customCursorStyle,
+                clickableIcons: false 
+            });
+
+            // Gestione Livello GeoJSON Catastale
+            geoJsonInfoWindow = new google.maps.InfoWindow();
+            updateGeoJsonStyle();
+
+            map.data.addListener('click', function(event) {
+                // Prendi le coordinate cliccando sul catasto
+                placeMarker(event.latLng);
+
+                let content = '<div class="text-sm p-2 font-sans text-gray-800">';
+                content += '<h4 class="font-bold border-b-2 border-gray-300 mb-2 pb-1 uppercase text-blue-800">Dati Catastali</h4>';
+                let foundProps = false;
+                
+                const clickedFeature = event.feature;
+                const featureId = clickedFeature.getId();
+                
+                if (featureId) {
+                    content += `<b class="uppercase text-xs text-blue-600">ID:</b> <span class="font-semibold text-gray-900">${featureId}</span><br>`;
+                    foundProps = true;
+                }
+                
+                clickedFeature.forEachProperty(function(value, property) {
+                    if (property === 'bbox' || property === 'geometry' || property === 'style') return;
+                    
+                    let displayValue = "N/D";
+                    if (value !== null && value !== undefined) {
+                        if (typeof value === 'object') {
+                            try { displayValue = JSON.stringify(value).replace(/["'{}]/g, '').replace(/,/g, ', '); }
+                            catch(e) { displayValue = "[Dato Complesso]"; }
+                        } else {
+                            displayValue = String(value).trim();
+                        }
+                    }
+                    
+                    if (displayValue === "") displayValue = "N/D";
+                    
+                    if (property.toUpperCase() === 'CODICE') {
+                        content += `<b class="uppercase text-xs text-red-600">PARTICELLA (${property}):</b> <span class="font-bold text-red-700 text-base">${displayValue}</span><br>`;
+                    } else {
+                        content += `<b class="uppercase text-xs text-gray-500">${property}:</b> <span class="font-semibold text-gray-900">${displayValue}</span><br>`;
+                    }
+                    foundProps = true;
+                });
+                
+                if (!foundProps) content += 'Nessun metadato associato alla geometria.';
+                content += '</div>';
+                
+                geoJsonInfoWindow.setContent(content);
+                geoJsonInfoWindow.setPosition(event.latLng);
+                geoJsonInfoWindow.open(map);
+
+                if (infoWindowTimeout) clearTimeout(infoWindowTimeout);
+                infoWindowTimeout = setTimeout(() => {
+                    geoJsonInfoWindow.close();
+                }, 5000);
+            });
+
+            map.addListener("click", (e) => placeMarker(e.latLng));
+            startGPS();
+            renderMapMarkers();
+        };
+
+        function startGPS() {
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    (pos) => {
+                        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                        document.getElementById("gpsStatus").innerText = "GPS Attivo";
+                        document.getElementById("gpsStatus").classList.replace("text-gray-300", "text-green-400");
+                        
+                        if (!userMarker) {
+                            userMarker = new google.maps.Marker({
+                                position: coords, map: map,
+                                icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#3b82f6", fillOpacity: 1, strokeColor: "white", strokeWeight: 2 },
+                                title: "Tua Posizione",
+                                clickable: false
+                            });
+                            map.setCenter(coords);
+                        } else {
+                            userMarker.setPosition(coords);
+                        }
+                    },
+                    (err) => { document.getElementById("gpsStatus").innerText = "GPS non disponibile."; },
+                    { enableHighAccuracy: true }
+                );
+            }
+        }
+
+        // --- CALCOLO COORDINATE DMS ---
+        // REGOLA: Punti cardinali con la lettera iniziale maiuscola (Nord, Sud, Est, Ovest)
+        function convertToDMS(deg, isLat) {
+            const dir = deg >= 0 ? (isLat ? 'Nord' : 'Est') : (isLat ? 'Sud' : 'Ovest');
+            const abs = Math.abs(deg);
+            const d = Math.floor(abs);
+            const minFloat = (abs - d) * 60;
+            const m = Math.floor(minFloat);
+            const s = ((minFloat - m) * 60).toFixed(2);
+            return `${d}°${m}'${s}"${dir.charAt(0)}`; 
+        }
+
+        function placeMarker(latLng) {
+            currentClickLatLng = { lat: latLng.lat(), lng: latLng.lng() };
+            
+            if (!currentPinMarker) {
+                currentPinMarker = new google.maps.Marker({
+                    position: latLng, map: map,
+                    icon: "http://maps.google.com/mapfiles/ms/icons/red-dot.png",
+                    clickable: false
+                });
+            } else {
+                currentPinMarker.setPosition(latLng);
+            }
+
+            const strDMS = `${convertToDMS(latLng.lat(), true)}; ${convertToDMS(latLng.lng(), false)}`;
+            document.getElementById("coordinate").value = strDMS;
+            enableSaveButton();
+        }
+
+        // --- GESTIONE KML/KMZ ANTE OPERAM (MAGENTA) ---
+        async function loadKML(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const isKMZ = file.name.toLowerCase().endsWith('.kmz');
+            const reader = new FileReader();
+
+            reader.onload = async function(e) {
+                try {
+                    let kmlText = "";
+                    if (isKMZ) {
+                        const zip = await JSZip.loadAsync(e.target.result);
+                        const kmlFile = Object.values(zip.files).find(f => f.name.toLowerCase().endsWith('.kml'));
+                        if (!kmlFile) throw new Error("KML non trovato nel KMZ");
+                        kmlText = await kmlFile.async("text");
+                    } else {
+                        kmlText = e.target.result;
+                    }
+                    
+                    parseKMLAndDraw(kmlText);
+                    document.getElementById('clearKmlBtn').classList.remove('hidden');
+                    showToast("Punti Ante Operam caricati!");
+                } catch (err) {
+                    showError("Errore lettura KML/KMZ.");
+                    console.error(err);
+                }
+                event.target.value = '';
+            };
+
+            if (isKMZ) reader.readAsArrayBuffer(file);
+            else reader.readAsText(file);
+        }
+
+        function parseKMLAndDraw(kmlString) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(kmlString, "text/xml");
+            const placemarks = xmlDoc.getElementsByTagName("Placemark");
+            
+            const bounds = new google.maps.LatLngBounds();
+            let added = 0;
+
+            for (let i = 0; i < placemarks.length; i++) {
+                const pointNode = placemarks[i].getElementsByTagName("Point")[0];
+                if (pointNode) {
+                    const coordString = pointNode.getElementsByTagName("coordinates")[0].textContent.trim();
+                    const parts = coordString.split(',');
+                    if (parts.length >= 2) {
+                        const lng = parseFloat(parts[0]);
+                        const lat = parseFloat(parts[1]);
+                        const nameNode = placemarks[i].getElementsByTagName("name")[0];
+                        const title = nameNode ? nameNode.textContent : "Ante Operam";
+
+                        const marker = new google.maps.Marker({
+                            position: { lat: lat, lng: lng },
+                            map: map,
+                            title: title,
+                            icon: createMarkerIcon("magenta", ""),
+                            clickable: false,
+                            visible: isKmlVisible
+                        });
+                        kmlMarkers.push(marker);
+                        bounds.extend(marker.getPosition());
+                        added++;
+                    }
+                }
+            }
+            if (added > 0) map.fitBounds(bounds);
+
+            document.getElementById('toggleKmlBtn').classList.remove('hidden');
+        }
+
+        function clearKML() {
+            kmlMarkers.forEach(m => m.setMap(null));
+            kmlMarkers = [];
+            isKmlVisible = true;
+            document.getElementById('clearKmlBtn').classList.add('hidden');
+            document.getElementById('toggleKmlBtn').classList.add('hidden');
+            
+            const toggleBtn = document.getElementById('toggleKmlBtn');
+            toggleBtn.innerHTML = '👁️ Nascondi';
+            toggleBtn.className = 'btn-sm-ui bg-slate-600 hover:bg-slate-700 text-white border border-slate-400 hidden shrink-0';
+            
+            showToast("Punti Ante Operam rimossi.");
+        }
+
+        function toggleKmlVisibility() {
+            if (kmlMarkers.length === 0) return;
+            
+            isKmlVisible = !isKmlVisible;
+            const btn = document.getElementById('toggleKmlBtn');
+
+            kmlMarkers.forEach(m => m.setVisible(isKmlVisible));
+
+            if (isKmlVisible) {
+                btn.innerHTML = '👁️ Nascondi';
+                btn.className = 'btn-sm-ui bg-slate-600 hover:bg-slate-700 text-white border border-slate-400 shrink-0';
+                showToast("Punti Ante Operam visibili.");
+            } else {
+                btn.innerHTML = '👁️‍🗨️ Mostra';
+                btn.className = 'btn-sm-ui bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-400 shrink-0';
+                showToast("Punti Ante Operam nascosti.");
+            }
+        }
+
+        // --- GESTIONE GEOJSON CATASTALE ---
+        function loadGeoJson(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const geojson = JSON.parse(e.target.result);
+                    
+                    const projWGS84 = "+proj=longlat +datum=WGS84 +no_defs";
+                    const projUTM33 = "+proj=utm +zone=33 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs";
+
+                    function convertCoords(coords) {
+                        if (Array.isArray(coords) && coords.length >= 2 && typeof coords[0] === 'number') {
+                            if (Math.abs(coords[0]) > 180) {
+                                const wgsCoords = proj4(projUTM33, projWGS84, [coords[0], coords[1]]);
+                                coords[0] = wgsCoords[0]; 
+                                coords[1] = wgsCoords[1]; 
+                            }
+                        } else if (Array.isArray(coords)) {
+                            for (let i = 0; i < coords.length; i++) {
+                                convertCoords(coords[i]);
+                            }
+                        }
+                    }
+
+                    if (geojson.features) {
+                        geojson.features.forEach(feature => {
+                            if (feature.geometry && feature.geometry.coordinates) {
+                                convertCoords(feature.geometry.coordinates);
+                            }
+                        });
+                    }
+
+                    clearGeoJson(false); 
+                    
+                    map.data.addGeoJson(geojson);
+                    
+                    const bounds = new google.maps.LatLngBounds();
+                    map.data.forEach(function(feature) {
+                        processGeoJsonGeometry(feature.getGeometry(), bounds.extend, bounds);
+                    });
+                    
+                    if (!bounds.isEmpty()) {
+                        map.fitBounds(bounds);
+                        google.maps.event.addListenerOnce(map, 'bounds_changed', function() {
+                            if (this.getZoom() > 20) this.setZoom(20);
+                        });
+                    }
+
+                    hasGeoJsonLoaded = true;
+                    isGeoJsonVisible = true; 
+                    
+                    document.getElementById('clearGeoJsonBtn').classList.remove('hidden');
+                    
+                    const toggleBtn = document.getElementById('toggleGeoJsonBtn');
+                    toggleBtn.classList.remove('hidden');
+                    toggleBtn.innerHTML = '👁️ Nascondi';
+                    toggleBtn.className = 'btn-sm-ui bg-slate-600 hover:bg-slate-700 text-white border border-slate-400 shrink-0';
+                    
+                    document.getElementById('geojsonOpacityContainer').style.display = 'flex';
+                    document.getElementById('searchParcelContainer').style.display = 'flex'; 
+                    updateGeoJsonStyle(); 
+                    
+                    showToast("Catasto caricato e georeferenziato.");
+                } catch (err) {
+                    console.error("Errore GeoJSON:", err);
+                    showError("Errore durante la lettura del file. Assicurati che sia un GeoJSON valido.");
+                }
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        function processGeoJsonGeometry(geometry, callback, thisArg) {
+            if (!geometry) return;
+            if (geometry instanceof google.maps.LatLng) {
+                callback.call(thisArg, geometry);
+            } else if (geometry instanceof google.maps.Data.Point) {
+                callback.call(thisArg, geometry.get());
+            } else {
+                geometry.getArray().forEach(function(g) {
+                    processGeoJsonGeometry(g, callback, thisArg);
+                });
+            }
+        }
+
+        function clearGeoJson(notify = true) {
+            map.data.forEach(function(feature) {
+                map.data.remove(feature);
+            });
+            hasGeoJsonLoaded = false;
+            isGeoJsonVisible = true;
+            highlightedFeatures = []; 
+            
+            if (infoWindowTimeout) clearTimeout(infoWindowTimeout);
+            
+            document.getElementById('clearGeoJsonBtn').classList.add('hidden');
+            document.getElementById('toggleGeoJsonBtn').classList.add('hidden'); 
+            document.getElementById('geojsonOpacityContainer').style.display = 'none';
+            document.getElementById('searchParcelContainer').style.display = 'none'; 
+            document.getElementById('searchParcelInput').value = ''; 
+            if (geoJsonInfoWindow) geoJsonInfoWindow.close();
+            if (notify) showToast("Mappa catastale rimossa.");
+        }
+
+        function searchParcel() {
+            if (!hasGeoJsonLoaded) return;
+            
+            const searchInput = document.getElementById('searchParcelInput');
+            const parcelNumber = searchInput.value.trim().toUpperCase();
+            
+            if (!parcelNumber) {
+                highlightedFeatures = [];
+                updateGeoJsonStyle();
+                showToast("Ricerca azzerata.");
+                searchInput.blur();
+                return;
+            }
+
+            if (!isGeoJsonVisible) {
+                toggleGeoJsonVisibility();
+            }
+
+            let found = false;
+            const bounds = new google.maps.LatLngBounds();
+            highlightedFeatures = []; 
+
+            map.data.forEach(function(feature) {
+                let isMatch = false;
+                const fId = feature.getId();
+                
+                if (fId && (String(fId).toUpperCase() === parcelNumber || 
+                            String(fId).toUpperCase().endsWith('.' + parcelNumber) || 
+                            String(fId).toUpperCase().endsWith('_' + parcelNumber))) {
+                    isMatch = true;
+                }
+
+                if (!isMatch) {
+                    feature.forEachProperty(function(value, property) {
+                        if (value !== null && value !== undefined) {
+                            const valStr = String(value).trim().toUpperCase();
+                            const propStr = property.toUpperCase();
+                            if (valStr === parcelNumber && (propStr.includes('CODICE') || propStr.includes('NUMERO') || propStr.includes('PARTICELLA'))) {
+                                isMatch = true;
+                            }
+                        }
+                    });
+                }
+
+                if (isMatch) {
+                    found = true;
+                    highlightedFeatures.push(feature); 
+                    processGeoJsonGeometry(feature.getGeometry(), bounds.extend, bounds);
+                }
+            });
+
+            if (found && !bounds.isEmpty()) {
+                updateGeoJsonStyle();
+                map.fitBounds(bounds);
+                
+                google.maps.event.addListenerOnce(map, 'bounds_changed', function() {
+                    if (this.getZoom() > 22) this.setZoom(22);
+                });
+                
+                showToast(`Particella ${parcelNumber} evidenziata.`);
+                searchInput.blur();
+                window.scrollTo({ top: 0, behavior: 'smooth' }); 
+            } else {
+                highlightedFeatures = [];
+                updateGeoJsonStyle();
+                showError(`La particella "${parcelNumber}" non è presente.`);
+            }
+        }
+
+        function zoomToSelectedParcel() {
+            if (!hasGeoJsonLoaded || highlightedFeatures.length === 0) {
+                showToast("Nessuna particella attualmente selezionata.");
+                return;
+            }
+
+            const bounds = new google.maps.LatLngBounds();
+            highlightedFeatures.forEach(feature => {
+                processGeoJsonGeometry(feature.getGeometry(), bounds.extend, bounds);
+            });
+
+            if (!bounds.isEmpty()) {
+                map.fitBounds(bounds);
+                
+                google.maps.event.addListenerOnce(map, 'bounds_changed', function() {
+                    if (this.getZoom() > 22) this.setZoom(22);
+                });
+                
+                window.scrollTo({ top: 0, behavior: 'smooth' }); 
+                showToast("Zoom massimo sulla particella.");
+            }
+        }
+
+        function toggleGeoJsonVisibility() {
+            if (!hasGeoJsonLoaded) return;
+            
+            isGeoJsonVisible = !isGeoJsonVisible;
+            const btn = document.getElementById('toggleGeoJsonBtn');
+
+            if (isGeoJsonVisible) {
+                btn.innerHTML = '👁️ Nascondi';
+                btn.className = 'btn-sm-ui bg-slate-600 hover:bg-slate-700 text-white border border-slate-400 shrink-0';
+                showToast("Livello catastale attivato.");
+            } else {
+                btn.innerHTML = '👁️‍🗨️ Mostra';
+                btn.className = 'btn-sm-ui bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-400 shrink-0';
+                showToast("Livello catastale spento.");
+                if (geoJsonInfoWindow) geoJsonInfoWindow.close(); 
+            }
+
+            updateGeoJsonStyle(); 
+        }
+
+        function updateGeoJsonStyle() {
+            if (!map || !map.data) return;
+            
+            const opacityInput = document.getElementById('catastoOpacity');
+            const opacity = opacityInput ? parseFloat(opacityInput.value) : 0.5;
+            
+            const opacityValueDisplay = document.getElementById('catastoOpacityValue');
+            if (opacityValueDisplay) {
+                opacityValueDisplay.innerText = Math.round(opacity * 100) + '%';
+            }
+            
+            map.data.setStyle(function(feature) {
+                if (!isGeoJsonVisible) {
+                    return { visible: false };
+                }
+
+                const geom = feature.getGeometry();
+                
+                if (geom && (geom.getType() === 'Point' || geom.getType() === 'MultiPoint')) {
+                    return { 
+                        visible: false, // Nasconde i centroidi/punti del catasto (le gocce rosse importate)
+                        cursor: customCursorStyle 
+                    };
+                }
+                
+                const isHighlighted = highlightedFeatures.includes(feature);
+
+                if (isHighlighted) {
+                    return {
+                        visible: true,
+                        fillColor: '#22c55e', 
+                        fillOpacity: opacity * 0.6, 
+                        strokeColor: '#00FF00', 
+                        strokeOpacity: Math.min(1, opacity + 0.5), 
+                        strokeWeight: 3, 
+                        zIndex: 999, 
+                        cursor: customCursorStyle 
+                    };
+                }
+
+                return {
+                    visible: true, 
+                    fillColor: '#FACC15', 
+                    fillOpacity: opacity * 0.35, 
+                    strokeColor: '#FFFF00', 
+                    strokeOpacity: Math.min(1, opacity + 0.4), 
+                    strokeWeight: 2,
+                    zIndex: 1,
+                    cursor: customCursorStyle 
+                };
+            });
+        }
+
+        // --- CONTROLLO CAMPI PRIMA DELLA FOTOGRAFIA ---
+        function checkFieldsBeforePhoto(event) {
+            const committente = document.getElementById("committente").value.trim();
+            const tecnico = document.getElementById("tecnico").value.trim();
+            const comune = document.getElementById("comune").value.trim();
+            const dataRilievo = document.getElementById("dataRilievo").value;
+            const foglio = document.getElementById("foglio").value.trim();
+            const particella = document.getElementById("particella").value.trim();
+            const tratto = document.getElementById("tratto").value.trim();
+            const coordinate = document.getElementById("coordinate").value.trim();
+
+            if (!committente || !tecnico || !comune || !dataRilievo || !foglio || !particella || !tratto) {
+                event.preventDefault(); // Blocca l'apertura della fotocamera
+                showError("Compila tutti i campi della sezione 'Dati Persistenti' (Committente, Tecnico, Comune, Data, Foglio, Particella, Tratto) prima di scattare la foto.");
+                return false;
+            }
+
+            if (!coordinate) {
+                event.preventDefault(); // Blocca l'apertura della fotocamera
+                showError("Tocca la mappa per rilevare le Coordinate prima di scattare la foto.");
+                return false;
+            }
+
+            return true;
+        }
+
+        // --- GESTIONE FOTOGRAFIA E CROP 16:9 ---
+        function handlePhoto(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const id = document.getElementById("idFoto").value;
+            const dataStr = document.getElementById("dataRilievo").value.replace(/-/g, ""); // YYYYMMDD
+            if(!dataStr) return showError("Inserire la data prima di scattare.");
+            
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+            
+            const fileName = `${id}_${dataStr}_${timeStr}.jpg`;
+            document.getElementById("photoFileName").value = fileName;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    // Forza il formato 16:9
+                    const targetRatio = 16 / 9;
+                    let sourceX = 0, sourceY = 0, sourceW = img.width, sourceH = img.height;
+                    const sourceRatio = sourceW / sourceH;
+
+                    if (sourceRatio > targetRatio) {
+                        sourceW = sourceH * targetRatio;
+                        sourceX = (img.width - sourceW) / 2;
+                    } else {
+                        sourceH = sourceW / targetRatio;
+                        sourceY = (img.height - sourceH) / 2;
+                    }
+
+                    // Risoluzione massima per non appesantire il DB
+                    const MAX_W = 1920;
+                    canvas.width = MAX_W;
+                    canvas.height = MAX_W / targetRatio;
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, canvas.width, canvas.height);
+                    
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    
+                    const prev = document.getElementById("photoPreview");
+                    prev.src = dataUrl;
+                    prev.style.display = "block";
+                    document.getElementById("photoDataUrl").value = dataUrl;
+                    document.getElementById("photoNameDisplay").innerText = "File generato: " + fileName;
+                    enableSaveButton();
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        // --- SALVATAGGIO LOGICA ---
+        async function saveRecord() {
+            const committente = document.getElementById("committente").value.trim();
+            const tecnico = document.getElementById("tecnico").value.trim();
+            const dataRilievo = document.getElementById("dataRilievo").value;
+            
+            const comune = document.getElementById("comune").value.trim();
+            const foglio = document.getElementById("foglio").value.trim();
+            const particella = document.getElementById("particella").value.trim();
+            const tratto = document.getElementById("tratto").value.trim();
+            
+            const id = document.getElementById("idFoto").value;
+            const coord = document.getElementById("coordinate").value;
+            const pNome = document.getElementById("photoFileName").value;
+            const pDati = document.getElementById("photoDataUrl").value;
+
+            if (!coord) return showError("Tocca la mappa per le coordinate.");
+            if (!pDati) return showError("Scatta prima la fotografia.");
+            if (!dataRilievo) return showError("Inserisci la Data del rilievo.");
+
+            // Formatting data in gg/mm/aaaa per output
+            const dParts = dataRilievo.split('-');
+            const dataFormattata = `${dParts[2]}/${dParts[1]}/${dParts[0]}`;
+
+            const record = {
+                id_foto: id,
+                committente: committente,
+                tecnico: tecnico,
+                data_iso: dataRilievo,
+                data_it: dataFormattata,
+                comune: comune,
+                foglio: foglio,
+                particella: particella,
+                tratto: tratto,
+                coordinate: coord,
+                lat: currentClickLatLng.lat,
+                lng: currentClickLatLng.lng,
+                foto_nome: pNome,
+                foto_dati: pDati
+            };
+
+            recordsDB.push(record);
+            await saveToDB(record);
+            
+            // Incrementa ID
+            updateNextId();
+            
+            // Pulisci SOLO dati scatto. I dati persistenti restano nel form.
+            document.getElementById("coordinate").value = "";
+            document.getElementById("photoInput").value = "";
+            document.getElementById("photoDataUrl").value = "";
+            document.getElementById("photoFileName").value = "";
+            document.getElementById("photoPreview").style.display = "none";
+            document.getElementById("photoNameDisplay").innerText = "";
+            
+            if (currentPinMarker) {
+                currentPinMarker.setMap(null);
+                currentPinMarker = null;
+            }
+            currentClickLatLng = null;
+
+            refreshUI();
+            showToast("Scatto salvato correttamente.");
+            document.getElementById("saveRecordBtn").disabled = true;
+        }
+
+        function refreshUI() {
+            document.getElementById("recordCount").innerText = recordsDB.length;
+            renderList();
+            renderMapMarkers();
+        }
+
+        function updateNextId() {
+            let next = 1;
+            const ids = recordsDB.map(r => parseInt(r.id_foto)).sort((a,b)=>a-b);
+            for(let i=0; i<ids.length; i++) { if(ids[i] === next) next++; else break; }
+            document.getElementById("idFoto").value = String(next).padStart(3, '0');
+        }
+
+        function enableSaveButton() {
+            document.getElementById("saveRecordBtn").disabled = false;
+        }
+
+        // --- RENDERING LISTA E MARKERS ---
+        function renderList() {
+            const container = document.getElementById("recordsList");
+            if (recordsDB.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 italic">Nessun dato.</p>';
+                return;
+            }
+            let html = '';
+            [...recordsDB].sort((a,b) => b.id_foto.localeCompare(a.id_foto)).forEach(r => {
+                html += `
+                <div class="bg-white p-3 rounded border border-gray-300 flex justify-between items-center shadow-sm">
+                    <div>
+                        <span class="font-black text-blue-800">Foto ${r.id_foto}</span>
+                        <div class="text-xs text-gray-600 mt-1">Tratto ${r.tratto || '-'} | Fg.${r.foglio} p.lla ${r.particella}</div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button type="button" onclick="showEditModal('${r.id_foto}')" class="text-blue-700 font-bold px-3 py-1 bg-blue-100 rounded border border-blue-400 shadow-sm active:bg-blue-200">MODIFICA</button>
+                        <button type="button" onclick="centerMapOnRecord('${r.id_foto}')" class="text-green-700 font-bold px-3 py-1 bg-green-100 rounded border border-green-400 shadow-sm active:bg-green-200">CENTRA</button>
+                        <button type="button" onclick="showDeleteModal('${r.id_foto}')" class="text-red-600 font-bold px-3 py-1 bg-red-100 rounded border border-red-300 shadow-sm active:bg-red-200">ELIMINA</button>
+                    </div>
+                </div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function centerMapOnRecord(id) {
+            if (!map) return;
+            const record = recordsDB.find(r => r.id_foto === id);
+            if (record && record.lat && record.lng) {
+                map.setCenter({ lat: record.lat, lng: record.lng });
+                map.setZoom(21);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                showToast(`Mappa centrata sulla Foto ${id}`);
+            } else {
+                showError("Coordinate non valide per questo scatto.");
+            }
+        }
+
+        function fitMapToAllPoints() {
+            if (!map) return;
+            
+            const bounds = new google.maps.LatLngBounds();
+            let pointsCount = 0;
+
+            // Punti Rilievo (Gialli)
+            recordsDB.forEach(r => {
+                if (r.lat && r.lng) {
+                    bounds.extend({ lat: r.lat, lng: r.lng });
+                    pointsCount++;
+                }
+            });
+
+            // Punti KML/KMZ Ante Operam (Magenta) - Solo se visibili
+            if (isKmlVisible) {
+                kmlMarkers.forEach(m => {
+                    if (m.getVisible() && m.getPosition()) {
+                        bounds.extend(m.getPosition());
+                        pointsCount++;
+                    }
+                });
+            }
+
+            if (pointsCount > 0) {
+                map.fitBounds(bounds);
+                // Prevenzione zoom eccessivo se c'è un solo punto in mappa
+                google.maps.event.addListenerOnce(map, 'bounds_changed', function() {
+                    if (this.getZoom() > 21) {
+                        this.setZoom(21);
+                    }
+                });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                showToast("Mappa inquadrata su tutti i punti.");
+            } else {
+                showToast("Nessun punto presente in mappa.");
+            }
+        }
+
+        function createMarkerIcon(color, text) {
+            const hex = color === "magenta" ? "#FF00FF" : "#FACC15";
+            const border = color === "magenta" ? "#8B008B" : "#854D0E";
+            
+            // Dimensioni impostate a 9px di diametro (r=4.5) con ancoraggio esatto al centro cx, cy (9,9)
+            const svg = `
+                <svg width="54" height="18" viewBox="0 0 54 18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="9" cy="9" r="4.5" fill="${hex}" stroke="${border}" stroke-width="1.5"/>
+                    <text x="17" y="12.5" fill="none" font-family="sans-serif" font-size="9" font-weight="900" text-anchor="start" stroke="#000000" stroke-width="2" stroke-linejoin="round">${text}</text>
+                    <text x="17" y="12.5" fill="${hex}" font-family="sans-serif" font-size="9" font-weight="900" text-anchor="start">${text}</text>
+                </svg>
+            `;
+            return {
+                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg.trim()),
+                anchor: new google.maps.Point(9, 9),
+                scaledSize: new google.maps.Size(54, 18)
+            };
+        }
+
+        function renderMapMarkers() {
+            if (!map) return;
+            savedMarkers.forEach(m => m.setMap(null));
+            savedMarkers = [];
+            
+            recordsDB.forEach(r => {
+                if (r.lat && r.lng) {
+                    const m = new google.maps.Marker({
+                        position: { lat: r.lat, lng: r.lng },
+                        map: map,
+                        title: `ID: ${r.id_foto}`,
+                        icon: createMarkerIcon("yellow", r.id_foto),
+                        clickable: false
+                    });
+                    savedMarkers.push(m);
+                }
+            });
+        }
+
+        // --- GESTIONE MODIFICA RECORD ---
+        function showEditModal(id) {
+            const record = recordsDB.find(r => r.id_foto === id);
+            if (!record) return;
+
+            document.getElementById("editIdFoto").value = record.id_foto;
+            
+            // Campi blindati
+            document.getElementById("editDisplayId").innerText = record.id_foto;
+            document.getElementById("editDisplayCoord").innerText = record.coordinate;
+            document.getElementById("editDisplayPhoto").src = record.foto_dati;
+
+            // Campi modificabili
+            document.getElementById("editCommittente").value = record.committente;
+            document.getElementById("editTecnico").value = record.tecnico;
+            document.getElementById("editComune").value = record.comune;
+            document.getElementById("editDataRilievo").value = record.data_iso;
+            document.getElementById("editFoglio").value = record.foglio;
+            document.getElementById("editParticella").value = record.particella;
+            document.getElementById("editTratto").value = record.tratto;
+
+            document.getElementById("editModal").classList.remove("hidden");
+        }
+
+        function closeEditModal() {
+            document.getElementById("editModal").classList.add("hidden");
+        }
+
+        async function saveEditRecord() {
+            const id = document.getElementById("editIdFoto").value;
+            const index = recordsDB.findIndex(r => r.id_foto === id);
+            if (index === -1) return;
+
+            const dataIso = document.getElementById("editDataRilievo").value;
+            if(!dataIso) return showError("La data è obbligatoria.");
+            const dParts = dataIso.split('-');
+            const dataIt = `${dParts[2]}/${dParts[1]}/${dParts[0]}`;
+
+            // Aggiorna memoria
+            recordsDB[index].committente = document.getElementById("editCommittente").value.trim();
+            recordsDB[index].tecnico = document.getElementById("editTecnico").value.trim();
+            recordsDB[index].comune = document.getElementById("editComune").value.trim();
+            recordsDB[index].data_iso = dataIso;
+            recordsDB[index].data_it = dataIt;
+            recordsDB[index].foglio = document.getElementById("editFoglio").value.trim();
+            recordsDB[index].particella = document.getElementById("editParticella").value.trim();
+            recordsDB[index].tratto = document.getElementById("editTratto").value.trim();
+
+            // Aggiorna Database Locale
+            await saveToDB(recordsDB[index]);
+
+            closeEditModal();
+            refreshUI(); // Ricarica la lista per mostrare i dati aggiornati
+            showToast("Scatto " + id + " modificato con successo.");
+        }
+
+        // --- GESTIONE CANCELLAZIONE RECORD ---
+        function showDeleteModal(id) {
+            recordToDeleteId = id;
+            document.getElementById("deleteModalFotoId").innerText = id;
+            document.getElementById("deleteModal").classList.remove("hidden");
+        }
+
+        function closeDeleteModal() {
+            recordToDeleteId = null;
+            document.getElementById("deleteModal").classList.add("hidden");
+        }
+
+        document.getElementById("confirmDeleteBtn").addEventListener("click", async () => {
+            if (recordToDeleteId) {
+                const id = recordToDeleteId;
+                recordsDB = recordsDB.filter(r => r.id_foto !== id);
+                await deleteRecord(id);
+                refreshUI();
+                updateNextId();
+                closeDeleteModal();
+                showToast("Scatto " + id + " eliminato con successo.");
+            }
+        });
+
+        // --- ESPORTAZIONI ---
+        // 1. Tabella CSV
+        function exportCSV() {
+            if(recordsDB.length===0) return showError("Nessun dato.");
+            const buildVersion = document.getElementById("appVersion").innerText;
+            
+            // Inserimento Firma App in testa al file
+            let csv = `"App:";"Foto muretti a secco - ${buildVersion}"\n`;
+            csv += "ID_Foto;Data;Comune;Foglio;Particella;Tratto;Coordinate_DMS;Nome_File\n";
+            
+            recordsDB.sort((a,b)=>a.id_foto.localeCompare(b.id_foto)).forEach(r => {
+                csv += `${r.id_foto};${r.data_it};${r.comune};${r.foglio};${r.particella};${r.tratto};${r.coordinate};${r.foto_nome}\n`;
+            });
+            
+            const comm = (recordsDB[0].committente || "Anonimo").trim();
+            downloadFile(csv, `${comm}_Tabella Foto Muretti a secco.csv`, "text/csv");
+        }
+
+        // 2. Archivio ZIP
+        async function exportZIP() {
+            if(recordsDB.length===0) return showError("Nessun dato.");
+            showToast("Creazione ZIP in corso...");
+            const zip = new JSZip();
+            const buildVersion = document.getElementById("appVersion").innerText;
+            
+            // Generazione automatica di un file di tracciamento all'interno dello ZIP
+            const infoText = `App: Foto muretti a secco\nVersione: ${buildVersion}\nData Generazione Archivio: ${new Date().toLocaleString('it-IT')}\nRecord esportati: ${recordsDB.length}`;
+            zip.file("Info_App.txt", infoText);
+
+            recordsDB.forEach(r => {
+                if(r.foto_dati) zip.file(r.foto_nome, r.foto_dati.split(',')[1], {base64: true});
+            });
+            const content = await zip.generateAsync({type:"blob"});
+            const url = URL.createObjectURL(content);
+            const a = document.createElement("a");
+            a.href = url; 
+            
+            const comm = (recordsDB[0].committente || "Anonimo").trim();
+            a.download = `${comm}_Foto Muretti a secco.zip`; 
+            
+            a.click();
+        }
+
+        // 3. Report PDF Tabellare
+        window.jsPDF = window.jspdf.jsPDF;
+        function exportReportPDF() {
+            if(recordsDB.length===0) return showError("Nessun dato.");
+            const doc = new jsPDF('landscape');
+            const comm = (recordsDB[0].committente || "Anonimo").trim();
+            const tech = recordsDB[0].tecnico || "";
+            const buildVersion = document.getElementById("appVersion").innerText;
+            
+            doc.setFontSize(14);
+            doc.text("Report Foto muretti a secco", 14, 20);
+            doc.setFontSize(11);
+            doc.text(`Committente: ${comm} - Data Rilievo: ${recordsDB[0].data_it}`, 14, 28);
+            
+            const rows = recordsDB.sort((a,b)=>a.id_foto.localeCompare(b.id_foto)).map(r => [
+                r.id_foto, r.tratto, r.comune, r.foglio, r.particella, r.coordinate, r.foto_nome
+            ]);
+            
+            doc.autoTable({
+                startY: 35,
+                head: [["ID", "Tratto", "Comune", "Fg.", "P.lla", "Coordinate", "Nome File"]],
+                body: rows,
+                headStyles: { fillColor: [2, 132, 199] },
+                margin: { bottom: 20 }
+            });
+
+            // Piè di pagina Report PDF con info App
+            const pages = doc.internal.getNumberOfPages();
+            for (let j = 1; j <= pages; j++) {
+                doc.setPage(j);
+                doc.setFontSize(8);
+                doc.setTextColor(100);
+                doc.text(`App: Foto muretti a secco - ${buildVersion}`, 14, 202);
+                doc.text(`Pag. ${j} di ${pages}`, 297/2, 202, { align: 'center' });
+                doc.text(`${tech}`, 297-14, 202, { align: 'right' });
+            }
+
+            doc.save(`${comm}_Report Foto muretti a secco.pdf`);
+        }
+
+        // 4. Layout Foto PDF (2x2 A4 Landscape come da esempio allegato)
+        function exportPhotoPDF() {
+            if(recordsDB.length===0) return showError("Nessun dato.");
+            showToast("Generazione PDF Fotografico in corso...");
+            
+            const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
+            const margin = 10;
+            const w = (297 - (margin * 3)) / 2; // ~133.5
+            const h = (210 - (margin * 3)) / 2; // ~90
+            const buildVersion = document.getElementById("appVersion").innerText;
+            
+            const sortedDB = [...recordsDB].sort((a,b)=>a.id_foto.localeCompare(b.id_foto));
+            const comm = sortedDB[0].committente || "Anonimo";
+            const tech = sortedDB[0].tecnico || "";
+            
+            for (let i = 0; i < sortedDB.length; i++) {
+                if (i > 0 && i % 4 === 0) doc.addPage();
+                
+                const r = sortedDB[i];
+                const posIndex = i % 4;
+                const col = posIndex % 2; 
+                const row = Math.floor(posIndex / 2); 
+                
+                const x = margin + (col * (w + margin));
+                const y = margin + (row * (h + margin));
+                
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(10);
+                
+                doc.text(r.data_it, x, y + 4);
+                
+                const coordW = doc.getTextWidth(r.coordinate);
+                doc.text(r.coordinate, x + w - coordW, y + 4);
+                
+                const imgW = w;
+                const imgH = w * (9/16); 
+                const imgY = y + 7;
+                
+                try {
+                    doc.addImage(r.foto_dati, 'JPEG', x, imgY, imgW, imgH);
+                } catch(e) { console.error("Errore addImage", e); }
+                
+                const infoText = `Foto ${r.id_foto} ${r.comune} - Foglio ${r.foglio} - p.lla ${r.particella} - Tratto ${r.tratto}`;
+                const infoW = doc.getTextWidth(infoText);
+                doc.text(infoText, x + (w/2) - (infoW/2), imgY + imgH + 5);
+            }
+            
+            // Piè di pagina globale Layout Foto
+            const pages = doc.internal.getNumberOfPages();
+            for(let j=1; j<=pages; j++) {
+                doc.setPage(j);
+                doc.setFontSize(9);
+                doc.setTextColor(0);
+                doc.text(`${comm} - Documentazione Fotografica`, margin, 203);
+                doc.text(`Pag. ${j}`, 297/2, 203, {align:'center'});
+                doc.text(`${tech}`, 297-margin, 203, {align:'right'});
+                
+                // Info App
+                doc.setFontSize(7);
+                doc.setTextColor(120);
+                doc.text(`App: Foto muretti a secco - ${buildVersion}`, margin, 207);
+            }
+            
+            doc.save(`${comm}_Foto montate.pdf`);
+        }
+
+        // 5. Planimetria Mappa PDF
+        async function exportMapPDF() {
+            const activeKml = kmlMarkers.length > 0 && isKmlVisible;
+            if (recordsDB.length === 0 && !activeKml) {
+                return showError("Nessun rilievo o punto Ante Operam visibile da esportare sulla mappa.");
+            }
+
+            showToast("Acquisizione cartografia in corso. Attendi...");
+
+            const apiKey = localStorage.getItem('gmaps_api_key_muretti');
+            const activeGeoJson = hasGeoJsonLoaded && isGeoJsonVisible;
+            
+            if (apiKey && !activeGeoJson && !activeKml) {
+                try {
+                    const center = map.getCenter();
+                    const zoom = map.getZoom();
+                    
+                    let staticMapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${center.lat()},${center.lng()}&zoom=${zoom}&size=640x400&scale=2&maptype=satellite&key=${apiKey}`;
+
+                    recordsDB.slice(0, 75).forEach(r => {
+                        if (r.lat && r.lng) {
+                            staticMapUrl += `&markers=color:yellow%7C${r.lat},${r.lng}`;
+                        }
+                    });
+
+                    const img = new Image();
+                    img.crossOrigin = "Anonymous";
+                    
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        
+                        const imgData = canvas.toDataURL('image/jpeg', 0.9);
+                        buildAndSaveMapPDF(imgData);
+                    };
+                    
+                    img.onerror = async function() {
+                        await exportMapPDFFallback();
+                    };
+                    
+                    img.src = staticMapUrl;
+                    return; 
+                } catch(e) {
+                    await exportMapPDFFallback();
+                }
+            } else {
+                await exportMapPDFFallback();
+            }
+        }
+
+        async function exportMapPDFFallback() {
+            const mapElement = document.getElementById("map");
+            if (map) map.setOptions({ zoomControl: false, fullscreenControl: false });
+            
+            let pinWasVisible = false;
+            if (currentPinMarker && currentPinMarker.getVisible() !== false) {
+                currentPinMarker.setVisible(false);
+                pinWasVisible = true;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            try {
+                const canvas = await html2canvas(mapElement, { 
+                    useCORS: true, 
+                    allowTaint: false,
+                    scale: 2 
+                });
+                const imgData = canvas.toDataURL('image/jpeg', 0.9);
+                buildAndSaveMapPDF(imgData);
+            } catch (error) {
+                console.error("Errore generazione mappa:", error);
+                showError("Impossibile catturare la mappa per limitazioni di sicurezza del browser.");
+            } finally {
+                if (map) map.setOptions({ zoomControl: true, fullscreenControl: false });
+                
+                if (pinWasVisible && currentPinMarker) {
+                    currentPinMarker.setVisible(true);
+                }
+            }
+        }
+
+        function buildAndSaveMapPDF(imgData) {
+            const doc = new window.jsPDF('landscape'); 
+            const buildVersion = document.getElementById("appVersion").innerText;
+            
+            let nomeCommittente = "";
+            if (recordsDB.length > 0) nomeCommittente = recordsDB[0].committente;
+            if (!nomeCommittente) nomeCommittente = "Anonimo";
+
+            if (nomeCommittente !== "Anonimo") {
+                doc.setFont("helvetica", "italic");
+                doc.setFontSize(9);
+                doc.setTextColor(80, 80, 80);
+                doc.text(`Committente: ${nomeCommittente}`, 148.5, 12, { align: 'center' });
+            }
+
+            doc.setTextColor(0, 0, 0);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(15);
+            doc.text("Planimetria punti di scatto foto muretti a secco", 14, 20);
+            doc.setFontSize(11);
+
+            let catastaliMap = new Map();
+            recordsDB.forEach(t => {
+                if (!t.foglio) return;
+                const f = String(t.foglio).trim();
+                const c = t.comune ? String(t.comune).trim() : "N/D";
+                const p = t.particella ? String(t.particella).trim() : "";
+                const tr = t.tratto ? String(t.tratto).trim() : "";
+
+                if (!catastaliMap.has(f)) {
+                    catastaliMap.set(f, { comune: c, particelle: new Set() });
+                }
+                if (p) {
+                    let label = p + (tr ? ` (Tratto ${tr})` : '');
+                    catastaliMap.get(f).particelle.add(label);
+                }
+            });
+
+            let catastaliList = Array.from(catastaliMap.keys()).map(f => {
+                return {
+                    foglio: f,
+                    comune: catastaliMap.get(f).comune,
+                    particelle: Array.from(catastaliMap.get(f).particelle)
+                };
+            });
+
+            catastaliList.sort((a, b) => a.foglio.localeCompare(b.foglio, undefined, {numeric: true, sensitivity: 'base'}));
+
+            let currentY = 27;
+
+            if (catastaliList.length === 0) {
+                doc.text(`Comune: N/D - Foglio di mappa: N/D - Particella/e: N/D`, 14, currentY);
+                currentY += 6;
+            } else {
+                catastaliList.forEach(item => {
+                    item.particelle.sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+                    let partStr = item.particelle.length > 0 ? item.particelle.join(", ") : "N/D";
+                    doc.text(`Comune: ${item.comune} - Foglio di mappa: ${item.foglio} - Particella/e: ${partStr}`, 14, currentY);
+                    currentY += 6;
+                });
+            }
+
+            const dateStr = new Date().toLocaleDateString('it-IT');
+            doc.text(`Data: ${dateStr} - Totale Punti Rilevati: ${recordsDB.length}`, 14, currentY);
+
+            const pdfMaxWidth = 269;
+            const imgY = currentY + 6; 
+            const maxBottomY = 188; 
+            
+            let pdfMaxHeight = maxBottomY - imgY;
+            if (pdfMaxHeight < 80) pdfMaxHeight = 80; 
+            
+            const imgProps = doc.getImageProperties(imgData);
+            const ratio = Math.min(pdfMaxWidth / imgProps.width, pdfMaxHeight / imgProps.height);
+            const finalWidth = imgProps.width * ratio;
+            const finalHeight = imgProps.height * ratio;
+            
+            const imgX = (297 - finalWidth) / 2;
+            
+            doc.setFillColor(210, 210, 210);
+            doc.rect(imgX + 1.5, imgY + 1.5, finalWidth, finalHeight, 'F');
+            doc.addImage(imgData, 'JPEG', imgX, imgY, finalWidth, finalHeight);
+            doc.setDrawColor(80, 80, 80);
+            doc.setLineWidth(0.3);
+            doc.rect(imgX, imgY, finalWidth, finalHeight, 'S');
+
+            const isKmlPresent = kmlMarkers.length > 0 && isKmlVisible;
+            const legW = 80; 
+            const legH = isKmlPresent ? 16 : 11;
+            const legX = imgX + 3;
+            const legY = imgY + finalHeight - legH - 3;
+            
+            doc.setFillColor(255, 255, 255);
+            doc.setDrawColor(120, 120, 120);
+            doc.setLineWidth(0.2);
+            doc.rect(legX, legY, legW, legH, 'FD');
+            
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(50, 50, 50);
+            doc.text("LEGENDA:", legX + 3, legY + 4.5);
+            
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            doc.setTextColor(0, 0, 0);
+            
+            doc.setFillColor(250, 204, 21); 
+            doc.setDrawColor(133, 77, 14); 
+            doc.setLineWidth(0.3);
+            doc.circle(legX + 5, legY + 9, 1.5, 'FD');
+            doc.text("Punti di scatto foto", legX + 9, legY + 10);
+            
+            if (isKmlPresent) {
+                doc.setFillColor(255, 0, 255); 
+                doc.setDrawColor(139, 0, 139); 
+                doc.circle(legX + 5, legY + 13.5, 1.5, 'FD');
+                doc.text("Punti di scatto foto Ante Operam", legX + 9, legY + 14.5);
+            }
+
+            let nomeTecnico = "";
+            if (recordsDB.length > 0) nomeTecnico = recordsDB[0].tecnico;
+            
+            const appInfoTesto = `App: Foto muretti a secco - ${buildVersion}`; 
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(10);
+            doc.setTextColor(80, 80, 80);
+            doc.text(`Pag. 1 di 1`, 148.5, 202, { align: 'center' });
+            
+            doc.setFont("helvetica", "italic");
+            doc.setFontSize(9);
+            doc.text(appInfoTesto, 14, 202, { align: 'left' });
+            if (nomeTecnico) doc.text(`${nomeTecnico}`, 283, 202, { align: 'right' });
+
+            doc.save(`${nomeCommittente.trim()}_Planimetria punti di scatto foto.pdf`);
+            showToast("Download Planimetria completato!");
+        }
+
+        // --- SESSIONI E ARCHIVIO STORICO ---
+        function showNewSessionModal() { document.getElementById('newSessionModal').classList.remove('hidden'); }
+        
+        async function confirmNewSession() {
+            if(recordsDB.length > 0) {
+                const tx = localDB.transaction([archiveStoreName], "readwrite");
+                const store = tx.objectStore(archiveStoreName);
+                const nome = document.getElementById("sessionNameInput").value || `Rilievo del ${new Date().toLocaleString('it-IT')}`;
+                
+                store.put({
+                    id_sessione: Date.now().toString(),
+                    nome_sessione: nome,
+                    data_creazione: new Date().toLocaleString('it-IT'),
+                    records: JSON.parse(JSON.stringify(recordsDB))
+                });
+            }
+            
+            await clearActiveDB();
+            recordsDB = [];
+            updateNextId();
+            refreshUI();
+            document.getElementById('newSessionModal').classList.add('hidden');
+            showToast("Nuovo rilievo avviato.");
+        }
+
+        async function showArchiveModal() {
+            const list = document.getElementById('archiveListContainer');
+            list.innerHTML = "Caricamento...";
+            document.getElementById('archiveModal').classList.remove('hidden');
+            
+            const tx = localDB.transaction([archiveStoreName], "readonly");
+            tx.objectStore(archiveStoreName).getAll().onsuccess = (e) => {
+                const sessions = e.target.result.sort((a,b) => b.id_sessione - a.id_sessione);
+                if(sessions.length===0) { list.innerHTML = "<p>Archivio vuoto.</p>"; return; }
+                
+                let html = "";
+                sessions.forEach(s => {
+                    html += `
+                    <div class="bg-gray-100 p-3 rounded flex flex-col mb-3 border border-gray-300 shadow-sm">
+                        <div class="mb-2">
+                            <div class="font-bold text-gray-800 text-lg leading-tight">${s.nome_sessione}</div>
+                            <div class="text-xs text-gray-500 font-semibold">${s.records.length} foto - Salvato il: ${s.data_creazione}</div>
+                        </div>
+                        <div class="flex space-x-2 justify-end mt-1 border-t border-gray-200 pt-2">
+                            <button onclick="showRenameSessionModal('${s.id_sessione}')" class="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded font-bold text-xs shadow-sm">RINOMINA</button>
+                            <button onclick="showDeleteSessionModal('${s.id_sessione}')" class="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded font-bold text-xs shadow-sm">ELIMINA</button>
+                            <button onclick="caricaSessione('${s.id_sessione}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded font-bold text-sm shadow-sm">CARICA</button>
+                        </div>
+                    </div>`;
+                });
+                list.innerHTML = html;
+            };
+        }
+
+        async function caricaSessione(id_sess) {
+            if(recordsDB.length > 0) await confirmNewSession(); 
+            
+            const tx = localDB.transaction([archiveStoreName], "readonly");
+            tx.objectStore(archiveStoreName).get(id_sess).onsuccess = async (e) => {
+                const sess = e.target.result;
+                if(!sess) return;
+                
+                await clearActiveDB();
+                recordsDB = sess.records;
+                for(let r of recordsDB) await saveToDB(r);
+                
+                if(recordsDB.length > 0) {
+                    const r = recordsDB[0];
+                    document.getElementById('committente').value = r.committente;
+                    document.getElementById('tecnico').value = r.tecnico;
+                    document.getElementById('dataRilievo').value = r.data_iso;
+                    document.getElementById('comune').value = r.comune;
+                    document.getElementById('foglio').value = r.foglio;
+                    document.getElementById('particella').value = r.particella;
+                    document.getElementById('tratto').value = r.tratto;
+                }
+                
+                updateNextId();
+                refreshUI();
+                document.getElementById('archiveModal').classList.add('hidden');
+                showToast("Sessione caricata!");
+            };
+        }
+
+        // Metodi gestione Rinomina/Elimina Archivio Storico
+        function showRenameSessionModal(id) {
+            sessionToRenameId = id;
+            const tx = localDB.transaction([archiveStoreName], "readonly");
+            tx.objectStore(archiveStoreName).get(id).onsuccess = (e) => {
+                if (e.target.result) {
+                    document.getElementById("renameSessionInput").value = e.target.result.nome_sessione;
+                    document.getElementById("renameSessionModal").classList.remove("hidden");
+                }
+            };
+        }
+
+        function closeRenameSessionModal() {
+            sessionToRenameId = null;
+            document.getElementById("renameSessionModal").classList.add("hidden");
+        }
+
+        document.getElementById("confirmRenameSessionBtn").addEventListener("click", async () => {
+            if (sessionToRenameId) {
+                const newName = document.getElementById("renameSessionInput").value.trim();
+                if(!newName) return showError("Il nome non può essere vuoto.");
+                await renameSessionInDB(sessionToRenameId, newName);
+                closeRenameSessionModal();
+                showArchiveModal();
+                showToast("Rilievo rinominato con successo.");
+            }
+        });
+
+        function showDeleteSessionModal(id) {
+            sessionToDeleteId = id;
+            const tx = localDB.transaction([archiveStoreName], "readonly");
+            tx.objectStore(archiveStoreName).get(id).onsuccess = (e) => {
+                if (e.target.result) {
+                    document.getElementById("deleteSessionNameDisplay").innerText = e.target.result.nome_sessione;
+                    document.getElementById("deleteSessionModal").classList.remove("hidden");
+                }
+            };
+        }
+
+        function closeDeleteSessionModal() {
+            sessionToDeleteId = null;
+            document.getElementById("deleteSessionModal").classList.add("hidden");
+        }
+
+        document.getElementById("confirmDeleteSessionBtn").addEventListener("click", async () => {
+            if (sessionToDeleteId) {
+                await deleteSessionFromDB(sessionToDeleteId);
+                closeDeleteSessionModal();
+                showArchiveModal();
+                showToast("Rilievo eliminato dall'archivio.");
+            }
+        });
+
+        // --- BACKUP DATABASE JSON ---
+        async function exportDatabase() {
+            const buildVersion = document.getElementById("appVersion").innerText;
+            const tx = localDB.transaction([archiveStoreName], "readonly");
+            tx.objectStore(archiveStoreName).getAll().onsuccess = (e) => {
+                const data = JSON.stringify(e.target.result);
+                downloadFile(data, `Backup_Archivio_Muretti_${buildVersion}_${new Date().getTime()}.json`, "application/json");
+            };
+        }
+
+        function importDatabase(event) {
+            const file = event.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    const tx = localDB.transaction([archiveStoreName], "readwrite");
+                    const store = tx.objectStore(archiveStoreName);
+                    data.forEach(sess => store.put(sess));
+                    showToast("Backup importato con successo!");
+                } catch(err) {
+                    showError("File non valido.");
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        // --- UTILITY ---
+        function showError(msg) {
+            document.getElementById("errorModalMsg").innerText = msg;
+            document.getElementById("errorModal").classList.remove('hidden');
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById("toast");
+            t.innerText = msg; t.className = "show";
+            setTimeout(() => { t.className = t.className.replace("show", ""); }, 3000);
+        }
+
+        function downloadFile(content, filename, type) {
+            const blob = new Blob([content], { type: type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = filename; a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Init
+        window.onload = async function() {
+            setAppVersion();
+            try {
+                await initLocalDB();
+                recordsDB = await loadFromDB() || [];
+                
+                if(recordsDB.length > 0) {
+                    const last = [...recordsDB].sort((a,b) => b.id_foto.localeCompare(a.id_foto))[0];
+                    document.getElementById('committente').value = last.committente;
+                    document.getElementById('tecnico').value = last.tecnico;
+                    document.getElementById('dataRilievo').value = last.data_iso;
+                    document.getElementById('comune').value = last.comune;
+                    document.getElementById('foglio').value = last.foglio;
+                    document.getElementById('particella').value = last.particella;
+                    document.getElementById('tratto').value = last.tratto;
+                }
+                
+                updateNextId();
+                refreshUI();
+            } catch(e) { console.error(e); }
+            loadGoogleMapsScript();
+        }
+    </script>
+</body>
+</html>
