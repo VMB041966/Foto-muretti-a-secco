@@ -502,56 +502,43 @@
 
     <script type="text/javascript">
         // --- GENERAZIONE AUTOMATICA HASH VERSIONE (ANTI-INQUINAMENTO) ---
-        // La funzione effettua una clonazione sterile del codice prima che estensioni
-        // o api esterne (Google Maps, Grammarly, ecc.) inquinino l'HTML.
-        function setAppVersion() {
+        // Lettura diretta e asincrona del file sorgente, bypassando il DOM del browser.
+        // Questo stratagemma rende l'Hash immune alle iniezioni invisibili delle estensioni (ad-blocker, Grammarly, etc.)
+        // garantendo che la versione cambi *SOLO* se il codice sorgente viene fisicamente modificato o integrato.
+        async function setAppVersion() {
             try {
-                let coreSource = "";
-                
-                // 1. Catturiamo il CSS nativo
-                document.querySelectorAll("style").forEach(s => coreSource += s.innerHTML);
-                
-                // 2. Catturiamo il JS nativo (ignorando script esterni come Tailwind o Google Maps)
-                document.querySelectorAll("script").forEach(s => {
-                    if (!s.src) coreSource += s.innerHTML;
+                // Fetch primario del file originale
+                const url = window.location.href.split('#')[0].split('?')[0];
+                const res = await fetch(url, { cache: "no-store" });
+                if (!res.ok) throw new Error("Fetch failed");
+                const source = await res.text();
+                generateHashAndDisplay(source);
+            } catch (e) {
+                // Metodo di Fallback (solo se aperto in locale offline tramite file:// dove il fetch viene bloccato per policy CORS)
+                // Si basa sul testo nativo immutabile di script e stili per ricostruire l'impronta
+                let fallbackSource = "";
+                document.querySelectorAll('script:not([src]), style').forEach(el => {
+                    fallbackSource += el.textContent;
                 });
-
-                // 3. Catturiamo la UI clonando il body per poterlo ispezionare in sicurezza
-                let bodyClone = document.body.cloneNode(true);
-                
-                // Pulizia aggressiva da elementi iniettati da browser o da estensioni note
-                bodyClone.querySelectorAll("script, style, noscript, iframe, grammarly-desktop-integration, [id^='ext'], [class^='ext']").forEach(el => el.remove());
-                
-                // Svuotiamo preventivamente tutti i contenitori dinamici il cui contenuto HTML interno
-                // può fluttuare senza alterare il codice originario (es. canvas mappa, contatori, liste json)
-                const dynamicIds = ["map", "gpsStatus", "recordCount", "appVersion", "recordsList", "archiveListContainer"];
-                dynamicIds.forEach(id => {
-                    const el = bodyClone.querySelector("#" + id);
-                    if (el) el.innerHTML = "";
-                });
-
-                coreSource += bodyClone.innerHTML;
-
-                // Rimuoviamo gli spazi vuoti, gli a capo e le virgolette. In questo modo
-                // il calcolo dell'Hash è totalmente immune alla formattazione e ai minifier accidentali.
-                const cleanSource = coreSource.replace(/[\s"']/g, '');
-
-                let hash = 0;
-                for (let i = 0; i < cleanSource.length; i++) {
-                    hash = ((hash << 5) - hash) + cleanSource.charCodeAt(i);
-                    hash = hash & hash; 
-                }
-                const hashVersion = Math.abs(hash).toString(16).toUpperCase().padStart(6, '0').substring(0, 6);
-                
-                const appVersionEl = document.getElementById("appVersion");
-                if (appVersionEl) appVersionEl.innerText = "v." + hashVersion;
-            } catch(e) {
-                console.error("Errore hashing versione:", e);
+                generateHashAndDisplay(fallbackSource);
             }
         }
 
-        // Eseguiamo il calcolo sincrono SUBITO, prima ancora che scatti l'evento window.onload
-        // e prim'ancora che qualsiasi script di terze parti alteri il DOM.
+        function generateHashAndDisplay(text) {
+            // Pulizia aggressiva da spazi, a capo e virgolette per normalizzare ed isolare la pura logica
+            const cleanSource = text.replace(/[\s"']/g, '');
+            let hash = 0;
+            for (let i = 0; i < cleanSource.length; i++) {
+                hash = ((hash << 5) - hash) + cleanSource.charCodeAt(i);
+                hash = hash & hash; 
+            }
+            const hashVersion = Math.abs(hash).toString(16).toUpperCase().padStart(6, '0').substring(0, 6);
+            
+            const appVersionEl = document.getElementById("appVersion");
+            if (appVersionEl) appVersionEl.innerText = "v." + hashVersion;
+        }
+
+        // Calcolo della versione eseguito immediatamente
         setAppVersion();
 
 
