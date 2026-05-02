@@ -169,7 +169,7 @@
         <div>
             <div class="flex items-baseline space-x-2">
                 <h1 class="text-xl font-bold uppercase">Foto muretti a secco</h1>
-                <span id="appVersion" class="text-xs font-mono text-gray-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700"></span>
+                <span id="appVersion" class="text-xs font-mono text-gray-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">v.4.0</span>
             </div>
             <p class="text-xs text-gray-300 mt-1" id="gpsStatus">Inizializzazione sistema in corso...</p>
         </div>
@@ -501,47 +501,6 @@
     </div>
 
     <script type="text/javascript">
-        // --- GENERAZIONE AUTOMATICA HASH VERSIONE (ANTI-INQUINAMENTO) ---
-        // Lettura diretta e asincrona del file sorgente, bypassando il DOM del browser.
-        // Questo stratagemma rende l'Hash immune alle iniezioni invisibili delle estensioni (ad-blocker, Grammarly, etc.)
-        // garantendo che la versione cambi *SOLO* se il codice sorgente viene fisicamente modificato o integrato.
-        async function setAppVersion() {
-            try {
-                // Fetch primario del file originale
-                const url = window.location.href.split('#')[0].split('?')[0];
-                const res = await fetch(url, { cache: "no-store" });
-                if (!res.ok) throw new Error("Fetch failed");
-                const source = await res.text();
-                generateHashAndDisplay(source);
-            } catch (e) {
-                // Metodo di Fallback (solo se aperto in locale offline tramite file:// dove il fetch viene bloccato per policy CORS)
-                // Si basa sul testo nativo immutabile di script e stili per ricostruire l'impronta
-                let fallbackSource = "";
-                document.querySelectorAll('script:not([src]), style').forEach(el => {
-                    fallbackSource += el.textContent;
-                });
-                generateHashAndDisplay(fallbackSource);
-            }
-        }
-
-        function generateHashAndDisplay(text) {
-            // Pulizia aggressiva da spazi, a capo e virgolette per normalizzare ed isolare la pura logica
-            const cleanSource = text.replace(/[\s"']/g, '');
-            let hash = 0;
-            for (let i = 0; i < cleanSource.length; i++) {
-                hash = ((hash << 5) - hash) + cleanSource.charCodeAt(i);
-                hash = hash & hash; 
-            }
-            const hashVersion = Math.abs(hash).toString(16).toUpperCase().padStart(6, '0').substring(0, 6);
-            
-            const appVersionEl = document.getElementById("appVersion");
-            if (appVersionEl) appVersionEl.innerText = "v." + hashVersion;
-        }
-
-        // Calcolo della versione eseguito immediatamente
-        setAppVersion();
-
-
         // --- INIZIALIZZAZIONE & STATO ---
         let map;
         let userMarker;
